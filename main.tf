@@ -25,7 +25,7 @@ variable "chosen_distro_name" {
 variable "chosen_name" {
   type        = string
   description = "The chosen release for image"
-  default     = "22.04"
+  default     = "20.04"
 }
 
 variable "chosen_network_name" {
@@ -37,7 +37,7 @@ variable "chosen_network_name" {
 variable "chosen_plan_id" {
   type        = string
   description = "The chosen ID of plan"
-  default     = "eco-1-1-0"
+  default     = "eco-3-1-0"
 }
 
 data "arvan_images" "terraform_image" {
@@ -54,19 +54,21 @@ data "arvan_abraks" "instance_list" {
 data "arvan_ssh_keys" "keys"{
   region = var.region
 }
-output "keys" {
-  value = data.arvan_ssh_keys.keys
-}
-output "id" {
-  value = [for plan in data.arvan_plans.plan_list.plans : {
-    id : plan.id,
-    name : plan.name,
-    ram : plan.memory,
-    price_per_hour : plan.price_per_hour,
-    }
-    if plan.generation == "ECO"
-  ]
-}
+
+#output "keys" {
+#  value = data.arvan_ssh_keys.keys
+#}
+
+#output "id" {
+#  value = [for plan in data.arvan_plans.plan_list.plans : {
+#    id : plan.id,
+#    name : plan.name,
+#    ram : plan.memory,
+#    price_per_hour : plan.price_per_hour,
+#    }
+#    if plan.generation == "ECO"
+#  ]
+#}
 
 locals {
   chosen_image = try(
@@ -122,10 +124,6 @@ locals {
   )
 }
 
-output "chosen_network" {
-  value = local.chosen_network
-}
-
 resource "arvan_network" "terraform_private_network" {
   region      = var.region
   description = "Terraform-created private network"
@@ -134,7 +132,7 @@ resource "arvan_network" "terraform_private_network" {
     start = "10.255.255.19"
     end   = "10.255.255.150"
   }
-  dns_servers    = ["8.8.8.8", "1.1.1.1"]
+  dns_servers    = ["185.55.226.26", "185.55.225.25", "178.22.122.100"]
   enable_dhcp    = true
   enable_gateway = true
   cidr           = "10.255.255.0/24"
@@ -150,7 +148,7 @@ resource "arvan_abrak" "built_by_terraform" {
     read   = "10m"
   }
   region    = var.region
-  name      = "built_by_terraform"
+  name      = "tf_abrak"
   count     = 1
   image_id  = local.chosen_image[0].id
   flavor_id = local.selected_plan.id
@@ -166,8 +164,42 @@ resource "arvan_abrak" "built_by_terraform" {
   security_groups = [arvan_security_group.terraform_security_group.id]
   volumes         = [arvan_volume.terraform_volume.id]
   ssh_key_name = "laptop"
+
+
+  connection {
+    type        = "ssh"
+    user        = "ubuntu"
+    private_key = file("/home/behnam/.ssh/laptop")
+    host        = [for network in self.networks : network if network.is_public == true][0].ip
+  }
+
+  provisioner "file" {
+    source      = "try-install-docker.sh"  # Path to your local script
+    destination = "/tmp/try-install-docker.sh"  # Path on the remote server
+
+  }
+
+  provisioner "remote-exec" {
+    inline = [
+      "sudo apt-get update",
+      "export DEBIAN_FRONTEND=noninteractive",
+      "sudo DEBIAN_FRONTEND=noninteractive apt-get -yq upgrade",
+      "sudo apt-get install -y apt-transport-https ca-certificates curl software-properties-common",
+      "sudo rm -f /etc/resolv.conf",
+      "sudo touch /etc/resolv.conf",
+      "sudo chmod 777 /etc/resolv.conf",
+      "sudo echo 'nameserver 10.202.10.202' >> /etc/resolv.conf",
+      "sudo echo 'nameserver 10.202.10.102' >> /etc/resolv.conf",
+      "chmod +x /tmp/try-install-docker.sh",  
+      "curl -fsSL https://raw.githubusercontent.com/behnambm/behnambm/main/get-docker.sh -o /tmp/install-docker.sh",
+      "sudo sh /tmp/try-install-docker.sh",
+      "sudo usermod -aG docker $USER",
+    ]
+  }
 }
 
 output "instances" {
   value = arvan_abrak.built_by_terraform
 }
+
+

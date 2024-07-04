@@ -24,6 +24,13 @@ Used Terraform for managing infrastructure on ArvanCloud. The goal is to automat
 
 ## Run 
 
+### 1.Initialize:
+
+```bash
+terraform init
+```
+
+### 2. Create variable file
 Create a variable file to put your API key there. 
 
 [How to get API key](https://docs.arvancloud.ir/fa/developer-tools/api/api-key)
@@ -32,6 +39,8 @@ Create a variable file to put your API key there.
 ```bash
 arvan_api_key = "apikey XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX"
 ```
+
+### 3. Apply
 
 ```bash
 terraform apply

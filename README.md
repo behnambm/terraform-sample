@@ -20,3 +20,28 @@ Used Terraform for managing infrastructure on ArvanCloud. The goal is to automat
     - Data Sources
     - Outputs
     - Provisioners
+
+
+## Run 
+
+Create a variable file to put your API key there. 
+
+[How to get API key](https://docs.arvancloud.ir/fa/developer-tools/api/api-key)
+
+`terraform.tfvars`
+```bash
+arvan_api_key = "apikey XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX"
+```
+
+```bash
+terraform apply
+```
+
+---
+
+
+Get list of available resources on ArvanCloud:
+
+```bash
+terraform refresh -var="out=true"
+```

@@ -7,13 +7,24 @@ terraform {
 }
 
 provider "arvan" {
-  api_key = "apikey 5a067cb3-b904-50ee-98b3-df0d5e184764"
+  api_key = var.arvan_api_key
+}
+
+variable "arvan_api_key" {
+  description = "API key for Arvan provider"
+  type        = string
+}
+
+variable "out" {
+  type = bool
+  default = false
+  description = "Enable/Disable output blocks"
 }
 
 variable "region" {
   type        = string
   description = "The chosen region for resources"
-  default     = "ir-thr-fr1"
+  default     = "ir-thr-ba1"
 }
 
 variable "chosen_distro_name" {
@@ -31,13 +42,13 @@ variable "chosen_name" {
 variable "chosen_network_name" {
   type        = string
   description = "The chosen name of network"
-  default     = "public201" //public202
+  default     = "public210" //public202
 }
 
 variable "chosen_plan_id" {
   type        = string
   description = "The chosen ID of plan"
-  default     = "eco-3-1-0"
+  default     = "g2-4-2-0"
 }
 
 data "arvan_images" "terraform_image" {
@@ -48,18 +59,20 @@ data "arvan_images" "terraform_image" {
 data "arvan_plans" "plan_list" {
   region = var.region
 }
+
 data "arvan_abraks" "instance_list" {
   region = var.region
 }
+
 data "arvan_ssh_keys" "keys"{
   region = var.region
 }
 
-#output "keys" {
-#  value = data.arvan_ssh_keys.keys
-#}
+output "keys" {
+ value = var.out ? data.arvan_ssh_keys.keys : null
+}
 
-#output "id" {
+output "id" {
 #  value = [for plan in data.arvan_plans.plan_list.plans : {
 #    id : plan.id,
 #    name : plan.name,
@@ -68,7 +81,8 @@ data "arvan_ssh_keys" "keys"{
 #    }
 #    if plan.generation == "ECO"
 #  ]
-#}
+ value =  var.out ? [for plan in data.arvan_plans.plan_list.plans : plan ] : null
+}
 
 locals {
   chosen_image = try(
@@ -115,6 +129,10 @@ data "arvan_networks" "terraform_network" {
   region = var.region
 }
 
+output "networks" {
+  value = var.out ? data.arvan_networks.terraform_network : null
+}
+
 locals {
   network_list = tolist(data.arvan_networks.terraform_network.networks)
   chosen_network = try(
@@ -142,7 +160,7 @@ resource "arvan_network" "terraform_private_network" {
 resource "arvan_abrak" "built_by_terraform" {
   depends_on = [arvan_volume.terraform_volume, arvan_network.terraform_private_network, arvan_security_group.terraform_security_group]
   timeouts {
-    create = "1h30m"
+    create = "2h"
     update = "2h"
     delete = "20m"
     read   = "10m"
@@ -174,26 +192,78 @@ resource "arvan_abrak" "built_by_terraform" {
   }
 
   provisioner "file" {
-    source      = "try-install-docker.sh"  # Path to your local script
-    destination = "/tmp/try-install-docker.sh"  # Path on the remote server
+    source      = "scripts/try.sh"
+    destination = "/tmp/try.sh"
+  }
 
+  provisioner "file" {
+    source      = "scripts/arvan-registry.sh"
+    destination = "/tmp/arvan-registry.sh"
+  }
+
+  provisioner "file" {
+    source      = "scripts/cri-dockerd.sh"
+    destination = "/tmp/cri-dockerd.sh"
+  }
+
+  provisioner "file" {
+    source      = "scripts/k8s.sh"
+    destination = "/tmp/k8s.sh"
+  }
+
+  provisioner "file" {
+    source      = "scripts/expose-public-ip.sh"
+    destination = "/tmp/expose-public-ip.sh"
+  }
+
+  provisioner "file" {
+    source      = "scripts/set-dns.sh"
+    destination = "/tmp/set-dns.sh"
   }
 
   provisioner "remote-exec" {
     inline = [
       "sudo apt-get update",
       "export DEBIAN_FRONTEND=noninteractive",
-      "sudo DEBIAN_FRONTEND=noninteractive apt-get -yq upgrade",
-      "sudo apt-get install -y apt-transport-https ca-certificates curl software-properties-common",
-      "sudo rm -f /etc/resolv.conf",
-      "sudo touch /etc/resolv.conf",
-      "sudo chmod 777 /etc/resolv.conf",
-      "sudo echo 'nameserver 10.202.10.202' >> /etc/resolv.conf",
-      "sudo echo 'nameserver 10.202.10.102' >> /etc/resolv.conf",
-      "chmod +x /tmp/try-install-docker.sh",  
+      "sudo apt-get install -y apt-transport-https ca-certificates curl software-properties-common gpg",
+
+      "chmod +x /tmp/try.sh",
+      "chmod +x /tmp/try-cri-dockerd.sh",
+      "chmod +x /tmp/arvan-registry.sh",
+      "chmod +x /tmp/set-dns.sh",
+      "chmod +x /tmp/k8s.sh",
+
       "curl -fsSL https://raw.githubusercontent.com/behnambm/behnambm/main/get-docker.sh -o /tmp/install-docker.sh",
-      "sudo sh /tmp/try-install-docker.sh",
+      "sudo /tmp/try.sh /tmp/install-docker.sh",
       "sudo usermod -aG docker $USER",
+
+      "sudo /tmp/try.sh /tmp/cri-dockerd.sh",
+
+      "sudo /tmp/set-dns.sh",
+
+      "sudo /tmp/try.sh /tmp/k8s.sh",
+      "sudo apt-get update",
+      "sudo apt-get install -y kubelet kubeadm kubectl",
+      "sudo apt-mark hold kubelet kubeadm kubectl",
+      "sudo systemctl enable --now kubelet",
+
+      "sudo /tmp/arvan-registry.sh",
+
+      "sudo kubeadm init --pod-network-cidr=192.168.0.0/16 --cri-socket=unix:///var/run/cri-dockerd.sock",
+
+      "mkdir -p $HOME/.kube",
+      "sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config",
+      "sudo chown $(id -u):$(id -g) $HOME/.kube/config",
+
+      "curl https://raw.githubusercontent.com/projectcalico/calico/v3.28.0/manifests/calico.yaml -O",
+      "kubectl apply -f calico.yaml",
+
+      "kubectl taint nodes --all node-role.kubernetes.io/control-plane-",
+
+      "sudo snap install helm --classic",
+      "helm repo add behnambm-helm-chart https://behnambm.github.io/helm-sample/",
+      "helm install my-helm-sample behnambm-helm-chart/helm-sample --version 1.0.0",
+      "/tmp/try.sh /tmp/expose-public-ip.sh",
     ]
   }
 }
